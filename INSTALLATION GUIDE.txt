@@ -1,0 +1,38 @@
+INSTALLATION GUIDE
+
+1. Create Conda Environment
+conda create --name Detikzify python=3.11
+
+2. Install TeX Live 
+Follow instructions at: https://www.tug.org/texlive/quickinstall.html
+
+3. Install Ghostscript
+- Download Ghostscript 10.04.0 Source from https://www.ghostscript.com/releases/gsdnld.html
+tar xzf ghostscript-10.04.0.tar.gz
+cd ghostscript-10.04.0
+./configure --prefix=$HOME/.local
+make
+make install
+
+# Add to ~/.bashrc:
+export PATH=$HOME/.local/bin:$PATH
+
+4. Install Poppler
+wget https://poppler.freedesktop.org/poppler-data-0.4.12.tar.gz
+tar xzf poppler-data-0.4.12.tar.gz
+cd poppler-data-0.4.12
+make prefix=$HOME/.local install
+cd ..
+mkdir build
+cmake .. -DCMAKE_INSTALL_PREFIX=$HOME/.local
+make
+make install
+
+# Add to ~/.bashrc if not already added:
+export PATH=$HOME/.local/bin:$PATH
+
+5. Install PyMuPDF
+conda install -c conda-forge pymupdf=1.18.19
+
+6. Install Requirements
+pip install -r requirements.txt
