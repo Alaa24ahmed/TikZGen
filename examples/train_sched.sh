@@ -54,7 +54,7 @@ check_prerequisites() {
     if [ ! -f "train.py" ]; then
         echo "Error: train.py not found!"
         exit 1
-    }
+    fi
 
     # Check if CUDA is available
     if ! command -v nvidia-smi &> /dev/null; then
@@ -69,14 +69,18 @@ check_prerequisites() {
 # Model and training paths
 BASE_MODEL="deepseek-ai/deepseek-coder-1.3b-base"
 PROJECTOR_DIR="https://huggingface.co/nllg/detikzify-ds-1.3b/resolve/main/projector/model.safetensors"
-OUTPUT_DIR="models/detikzify-v1"
-DATASET_PATH="path/to/your/sorted_dataset.csv"  # Update this with your dataset path
+OUTPUT_DIR="models/detikzify-cl-10k_pvalue2_lambda0.3_tgrow8"  # Update this with your output directory
+DATASET_PATH="samahadhoud/decomposed-tikz-dataset-with-difficulty-measure-0-10"  # Update this with your dataset path
 
 # Curriculum learning parameters
 CURRICULUM_TYPE="root-p"
-P_VALUE=3.0
+# P_VALUE=3.0
+# LAMBDA_0=0.3
+# T_GROW=3.0
+
+P_VALUE=2.0
 LAMBDA_0=0.3
-T_GROW=3.0
+T_GROW=8.0
 
 ###################
 # Main Script

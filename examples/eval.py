@@ -19,6 +19,11 @@ from tqdm import tqdm
 from transformers import set_seed
 from transformers.utils import is_flash_attn_2_available
 
+from pathlib import Path
+import json
+from PIL import Image
+import io
+
 from detikzify.evaluate import (
     CrystalBLEU,
     KernelInceptionDistance,
@@ -28,6 +33,22 @@ from detikzify.evaluate import (
 )
 from detikzify.infer import DetikzifyPipeline, TikzDocument
 from detikzify.model import load as load_model
+import os
+import sys
+import numpy as np
+# Add module path
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(PROJECT_ROOT)
+
+import os
+
+# Set environment variables for pdf2image
+os.environ['PATH'] = f"{os.environ['PATH']}:/home/nils.lukas/anaconda3/envs/Datikz/bin"
+os.environ['PDFINFO'] = '/home/nils.lukas/anaconda3/envs/Datikz/bin/pdfinfo'
+os.environ['POPPLER_PATH'] = '/home/nils.lukas/anaconda3/envs/Datikz/bin'
+
+from difficulty_measure.image_similarity import compute_image_similarity_with_components
+from difficulty_measure.code_similarity import tikz_code_similarity
 
 WORLD_SIZE = int(getenv("WORLD_SIZE", 1))
 RANK = int(getenv("RANK", 0))
@@ -97,41 +118,62 @@ def generate(pipe, image, strict=False, timeout=None, **tqdm_kwargs):
         tikzpics.add((score, tikzpic))
         if not tikzpic.compiled_with_errors if strict else tikzpic.is_rasterizable:
             success = True
+        #too not spend too much time if there is no rastrized image
+        if time() - start >= 900:
+            return [tikzpic for _, tikzpic in sorted(tikzpics, key=itemgetter(0))]
         if success and (not timeout or time() - start >= timeout):
             break
     return [tikzpic for _, tikzpic in sorted(tikzpics, key=itemgetter(0))]
 
 def predict(model_name, base_model, testset, cache_file=None, timeout=None, key="image"):
     predictions, worker_preds = list(), list()
+    last_completed_index = 0
+    
+    # Create directory for cache file if it doesn't exist
+    if cache_file and RANK == 0:
+        cache_dir = os.path.dirname(cache_file)
+        os.makedirs(cache_dir, exist_ok=True)
+    
+    # Load existing predictions if cache exists
+    if cache_file and isfile(cache_file):
+        with open(cache_file) as f:
+            predictions = [[TikzDocument(code, timeout=None) for code in sample] for sample in load_json(f)]
+            last_completed_index = len(predictions)
+
     model, tokenizer = load_model(
         base_model=base_model,
         device_map=RANK,
         torch_dtype=bfloat16 if is_cuda_available() and is_bf16_supported() else float16,
         attn_implementation="flash_attention_2" if is_flash_attn_2_available() else None,
     )
-    # if we don't have a timeout (i.e., only run mcts until we obtain smth compileable), we can use fast metrics
+
     metric_type = "model" if timeout else "fast"
     pipe = DetikzifyPipeline(model=model, tokenizer=tokenizer, metric=metric_type)
-    if cache_file and isfile(cache_file):
-        with open(cache_file) as f:
-            # disable timeout as we know that the (last) images compile
-            predictions = [[TikzDocument(code, timeout=None) for code in sample] for sample in load_json(f)]
+
     try:
-        worker_chunk = list(chunk(list(testset)[len(predictions):], WORLD_SIZE))[RANK]
-        # FIXME: right now there only is a progress bar for Rank 0
-        for item in tqdm(worker_chunk, desc=f"{model_name.title()} ({RANK})", disable=RANK!=0):
+        # Get remaining items to process
+        remaining_items = list(testset)[last_completed_index:]
+        worker_chunk = list(chunk(remaining_items, WORLD_SIZE))[RANK]
+        
+        for i, item in enumerate(tqdm(worker_chunk, desc=f"{model_name.title()} ({RANK})", disable=RANK!=0)):
             tikz = generate(pipe, image=item[key], timeout=timeout, position=1, leave=False, disable=RANK!=0)
             worker_preds.append(tikz)
         del model, tokenizer, pipe
+        
     finally:
         dist.all_gather_object(gathered:=WORLD_SIZE * [None], worker_preds)
-        predictions.extend(interleave(gathered))
+        new_predictions = interleave(gathered)
+        predictions.extend(new_predictions)
+        
+        # Save final results
         if cache_file and RANK == 0:
             with open(cache_file, 'w') as f:
                 dump([[p.code for p in ps] for ps in predictions], f)
+                
     return predictions
 
 def load_metrics(trainset, measure_throughput=False, **kwargs):
+    # Existing metrics initialization
     bleu = CrystalBLEU(corpus=trainset, **kwargs)
     eed = TexEditDistance(**kwargs)
     emdsim = ImageSim(mode="emd", **kwargs)
@@ -151,30 +193,104 @@ def load_metrics(trainset, measure_throughput=False, **kwargs):
     def compute(references, predictions):
         ref_code, pred_code = [[ref['code']] for ref in references], [pred[-1].code for pred in predictions]
         ref_image, pred_image = [ref['image'] for ref in references], [pred[-1].rasterize() for pred in predictions]
-        assert all(pred[-1].is_rasterizable for pred in predictions)
+        # assert all(pred[-1].is_rasterizable for pred in predictions)
 
+        # Initialize scores
         if measure_throughput:
             scores = {"MeanSamplingThroughput": mean_sampling_throughput(predictions=predictions)}
         else:
             scores = {"MeanTokenEfficiency": mean_token_efficiency(predictions=predictions)}
 
+        # Compute existing metrics
         metrics = {
             bleu: partial(bleu.update, list_of_references=ref_code, hypotheses=pred_code),
             eed: partial(eed.update, target=ref_code, preds=pred_code),
-            emdsim: lambda: [emdsim.update(img1=img1, img2=img2) for img1, img2 in zip(ref_image, pred_image)],
-            cossim: lambda: [cossim.update(img1=img1, img2=img2) for img1, img2 in zip(ref_image, pred_image)],
-            dreamsim: lambda: [dreamsim.update(img1=img1, img2=img2) for img1, img2 in zip(ref_image, pred_image)],
-            kid: lambda: [(kid.update(img1, True), kid.update(img2, False)) for img1, img2 in zip(ref_image, pred_image)],
+            emdsim: lambda: [emdsim.update(img1=img1, img2=img2) for img1, img2 in zip(ref_image, pred_image) if img2 is not None],
+            cossim: lambda: [cossim.update(img1=img1, img2=img2) for img1, img2 in zip(ref_image, pred_image) if img2 is not None],
+            dreamsim: lambda: [dreamsim.update(img1=img1, img2=img2) for img1, img2 in zip(ref_image, pred_image) if img2 is not None],
+            kid: lambda: [(kid.update(img1, True), kid.update(img2, False)) for img1, img2 in zip(ref_image, pred_image) if img2 is not None],
         }
 
         for metric, update in metrics.items():
             update()
-            scores[str(metric)] = metric.compute() # type: ignore
+            scores[str(metric)] = metric.compute()
             metric.reset()
+
+        # Compute image similarity metrics
+        image_metrics = []
+        for img1, img2 in zip(ref_image, pred_image):
+            if img2:
+                img_metrics = compute_image_similarity_with_components(img1, img2)
+                image_metrics.append(img_metrics)
+            
+        # Add mean image similarity scores
+        scores.update({
+            'mean_structural_score': np.mean([m['structural_score'] for m in image_metrics]),
+            'mean_rmse': np.mean([m['rmse'] for m in image_metrics]),
+            'mean_ssim': np.mean([m['ssim'] for m in image_metrics]),
+            'mean_abs_diff': np.mean([m['abs_diff'] for m in image_metrics]),
+            'mean_image_combined_score': np.mean([m['combined_score'] for m in image_metrics])
+        })
+        
+        # Compute custom code similarity scores
+        code_similarities = []
+        for ref, pred in zip(ref_code, pred_code):
+            code_metrics = tikz_code_similarity(ref[0], pred)
+            code_similarities.append(code_metrics)
+        
+        # Add mean code similarity metrics
+        code_sim_averages = {
+            f"mean_{k}": np.mean([m[k] for m in code_similarities if isinstance(m[k], (int, float))])
+            for k in ['command_similarity', 'coordinate_similarity', 'style_similarity', 
+                     'sequence_similarity', 'edge_similarity', 'overall_similarity']
+        }
+        scores.update(code_sim_averages)
+
         return scores
 
     return compute
 
+def save_predictions(predictions, output_dir, save_images=True):
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for model_name, model_preds in predictions.items():
+        try:
+            model_dir = output_dir / model_name
+            model_dir.mkdir(exist_ok=True)
+            
+            code_output = []
+            per_sample_metrics = []
+            
+            for i, pred_list in enumerate(model_preds):
+                try:
+                    # Just save the codes for each prediction
+                    codes = [pred.code for pred in pred_list]
+                    code_output.append(codes)
+                    
+                    best_pred = pred_list[-1]
+                    
+                    if save_images and best_pred.is_rasterizable:
+                        try:
+                            img = best_pred.rasterize()
+                            img_path = model_dir / f"sample_{i}.png"
+                            img.save(str(img_path))
+                        except Exception as e:
+                            print(f"Failed to save image for sample {i}: {e}")
+                            
+                except Exception as e:
+                    print(f"Failed to process sample {i} for model {model_name}: {e}")
+                    continue
+
+            # Save all codes
+            code_path = model_dir / "predictions.json"
+            with open(code_path, 'w') as f:
+                json.dump(code_output, f, indent=2)
+                    
+        except Exception as e:
+            print(f"Failed to save predictions for model {model_name}: {e}")
+            continue
+        
 if __name__ == "__main__":
     set_seed(0)
     dist.init_process_group(timeout=timedelta(days=3))
@@ -198,11 +314,22 @@ if __name__ == "__main__":
                 timeout=args.timeout,
                 key="sketch" if args.use_sketches else "image"
             )
-
+    output_dir=join(args.cache_dir, "predictions") if args.cache_dir else "predictions"
     if RANK == 0: # Scoring only on main process
+        # Save predictions and images
+        save_predictions(
+            predictions=predictions,
+            output_dir=output_dir,
+            save_images=True
+        )
+        
+        # Continue with metric computation
+
         scores = dict()
         metrics = load_metrics(trainset['code'], measure_throughput=args.timeout is not None, sync_on_compute=False) # type: ignore
         for model_name, prediction in tqdm(predictions.items(), desc="Computing metrics", total=len(predictions)):
             scores[model_name] = metrics(references=testset, predictions=prediction)
-        with open(args.output, "w") as file:
+        # Save scores in the predictions directory
+        scores_file = join(output_dir, "scores.json")
+        with open(scores_file, "w") as file:
             dump(scores, file)

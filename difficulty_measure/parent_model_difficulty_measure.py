@@ -30,7 +30,7 @@ import threading
 def create_output_directory():
     # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     # base_dir = f"tikz_results_{timestamp}"
-    base_dir = "data_difficulty_results"
+    base_dir = "data_difficulty_results[5350:5370]"
     os.makedirs(base_dir, exist_ok=True)
     os.makedirs(os.path.join(base_dir, "original"), exist_ok=True)
     os.makedirs(os.path.join(base_dir, "generated"), exist_ok=True)
@@ -119,6 +119,8 @@ def generate(pipe, image, strict=False, timeout=None, **tqdm_kwargs):
         tikzpics.add((score, tikzpic))
         if not tikzpic.compiled_with_errors if strict else tikzpic.is_rasterizable:
             success = True
+        if time() - start >= 300:
+            return [tikzpic for _, tikzpic in sorted(tikzpics, key=itemgetter(0))]
         if success and (not timeout or time() - start >= timeout):
             break
     return [tikzpic for _, tikzpic in sorted(tikzpics, key=itemgetter(0))]

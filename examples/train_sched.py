@@ -15,7 +15,7 @@ from transformers.utils.logging import enable_explicit_format, set_verbosity_inf
 
 from detikzify.dataset import load_dataset
 from detikzify.model import load
-from detikzify.train import train
+from detikzify.train_sched import train
 
 def parse_args():
     """
@@ -107,22 +107,18 @@ def load_and_prepare_model(args) -> Tuple[PreTrainedModel, PreTrainedTokenizer]:
     """
     return load(args.base_model, pretrain_mm_mlp_adapter=args.projector)
 
-def load_and_prepare_dataset(dataset_path: str) -> Dataset:
+def load_and_prepare_dataset(dataset_name: str) -> Dataset:
     """
-    Load and prepare the dataset.
-
+    Load and prepare a dataset from Hugging Face.
+    
     Args:
-        dataset_path: Path to the CSV dataset file
-
+        dataset_name: Name of the dataset on Hugging Face (e.g., 'org/dataset_name')
+        
     Returns:
         Dataset: Processed dataset ready for training
     """
-    dataset = load_dataset(
-        'csv',
-        data_files={'train': dataset_path},
-        split='train'
-    )
-    return dataset.select_columns(["rank", "image", "code"]).rename_column("code", "text")
+    dataset = load_dataset(dataset_name, split='train')
+    return dataset.select_columns(["rank", "original_image", "original_code"]).rename_column("original_code", "text").rename_column("original_image", "image")
 
 def get_curriculum_config(args) -> dict:
     """

@@ -5,7 +5,7 @@ from functools import cached_property
 from io import BytesIO
 from itertools import chain
 from math import ceil, floor
-
+import json
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
@@ -21,7 +21,17 @@ from ..util import convert, infer_device, SplitEpochSaveCallback
 from .pretrain import DataCollatorForImageTextTraining, preprocess
 
 # Configure logging and environment variables
-logger = logging.get_logger("transformers")
+# logger = logging.get_logger("transformers")
+import os
+import logging
+from transformers import logging as transformers_logging
+
+# Create log file in your output directory
+log_file = os.path.join("training.log")
+file_handler = logging.FileHandler(log_file)
+logger = transformers_logging.get_logger("transformers")
+logger.addHandler(file_handler)
+
 WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
 RANK = int(os.environ.get("RANK", 0))
 
@@ -171,7 +181,7 @@ class CurriculumScheduler:
 class CurriculumLearningCallback(TrainerCallback):
     """Callback to update curriculum learning threshold at epoch boundaries."""
     
-    def __init__(self, dataset: ImageDataset, scheduler_config: dict):
+    def __init__(self, dataset: ImageDataset, scheduler_config: dict, starting_epoch: float = 0):
         """
         Initialize the callback.
         
@@ -181,12 +191,14 @@ class CurriculumLearningCallback(TrainerCallback):
         """
         self.dataset = dataset
         self.scheduler = CurriculumScheduler(**scheduler_config)
-    
+        self.starting_epoch = starting_epoch
+        
     def on_epoch_begin(self, args, state, control, **kwargs):
         """Update difficulty threshold at the start of each epoch."""
-        threshold = self.scheduler.get_threshold(state.epoch)
+        current_epoch = state.epoch + 1  # Add 1 here
+        threshold = self.scheduler.get_threshold(current_epoch)
         self.dataset.set_difficulty_threshold(threshold)
-        logger.info(f"Epoch {state.epoch}: difficulty threshold = {threshold:.3f}")
+        logger.info(f"Epoch {current_epoch}: difficulty threshold = {threshold:.3f}")
 
 def prepare_dataset(dataset, tokenizer, model_config):
     """
@@ -243,8 +255,8 @@ def train(
     overwrite: bool = False,
     deepspeed = None,
     batch_size: int = 128,
-    micro_batch_size: int = 1,
-    num_epochs: int = 3,
+    micro_batch_size: int = 2,
+    num_epochs: int = 8,
     learning_rate: float = 4e-5,
     gradient_checkpointing: bool = False,
     group_by_length: bool = False,
@@ -279,13 +291,30 @@ def train(
     # Handle checkpointing
     last_checkpoint = _handle_checkpoints(output_dir, overwrite)
 
+    starting_epoch = 0
+    
+    if last_checkpoint:
+        # Load trainer state to get current epoch
+        trainer_state_path = os.path.join(last_checkpoint, "trainer_state.json")
+        if os.path.exists(trainer_state_path):
+            with open(trainer_state_path, 'r') as f:
+                trainer_state = json.load(f)
+                starting_epoch = trainer_state['log_history'][-1]['epoch']
+                logger.info(f"Resuming from epoch {starting_epoch:.2f}")
+                
+                # Adjust remaining epochs
+                num_epochs_2 = num_epochs - floor(starting_epoch)
+                logger.info(f"Will train for {num_epochs_2} more epochs")
+
+
     # Prepare dataset with curriculum learning
     processed_dataset = prepare_dataset(dataset, tokenizer, model.config)
     
     # Initialize curriculum learning callback
     curriculum_callback = CurriculumLearningCallback(
         dataset=processed_dataset,
-        scheduler_config=curriculum_config
+        scheduler_config=curriculum_config,
+        starting_epoch=starting_epoch  # Pass starting epoch to callback
     )
 
     # Configure trainer
@@ -407,7 +436,7 @@ def _configure_trainer(
         args=training_args,
         callbacks=[
             curriculum_callback,
-            SplitEpochSaveCallback(step_size=0.25)
+            SplitEpochSaveCallback(step_size=0.1)
         ],
         data_collator=DataCollatorForImageTextTraining(
             tokenizer=tokenizer.text,
