@@ -28,11 +28,11 @@ git clone https://github.com/potamides/DeTikZify
 Either create a new environment using environment.yml:
 ```bash
 conda env create -f environment.yml
-conda activate Detikzify
+conda activate TikzGen
 ```
 or create manually:
 ```bash
-conda create --name Detikzify python=3.11
+conda create --name TikzGen python=3.11
 ```
 ### 3. Install TeX Live
 Unix/Linux Systems:
