@@ -10,14 +10,14 @@ TikZGen is an advanced tool for converting scientific figures into TikZ code, bu
 
 - **Figure Decomposition**: Automatically breaks down complex figures into manageable components
 - **Curriculum Learning**: Uses a teacher-student framework for progressive learning
-- **Enhanced Dataset**: Includes MicroTikZ, an extended dataset with sequential drawing steps
+- **Enhanced Dataset**: Includes [MicroTikZ](https://huggingface.co/datasets/samahadhoud/decomposed-tikz-dataset-with-difficulty-measure-0-10), an extended dataset with sequential drawing steps
 - **Comprehensive Analysis**: Employs advanced metrics for figure complexity measurement
 
-## Prerequisites
-
-- Python 3.11+
-- Conda package manager
-- Basic build tools (make, gcc, cmake)
+## Model Weights & Datasets
+We upload the models and dataset to the Hugging Face Hub:
+1. [Baseline Model](https://huggingface.co/samahadhoud/deepseek-coder-1.3b-base_10k)
+2. [Our Model with CL approach](https://huggingface.co/samahadhoud/deepseek-coder-1.3b-base-with-curriculum-learning_10k_pvalue2_lambda0.3_tgrow8)
+3. [MicroTikz Dataset](https://huggingface.co/datasets/samahadhoud/decomposed-tikz-dataset-with-difficulty-measure-0-10)
 
 ## Installation Guide
 ### 1. Clone the repo: 
