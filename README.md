@@ -52,7 +52,7 @@ Download and run the installer from https://mirror.ctan.org/systems/texlive/tlne
 ### 4. Install Ghostscript
 Unix/Linux Systems
 ```bash
-# Download AGPL release from https://www.ghostscript.com/releases/gsdnld.html
+Download AGPL release from https://www.ghostscript.com/releases/gsdnld.html
 tar xzf ghostscript-10.04.0.tar.gz
 cd ghostscript-10.04.0
 ./configure --prefix=$HOME/.local
