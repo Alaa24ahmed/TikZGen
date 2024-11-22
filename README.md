@@ -74,7 +74,7 @@ cmake .. -DCMAKE_INSTALL_PREFIX=$HOME/.local
 make
 make install
 ```
-### if manual environemnt:
+### if manual environment:
 ```bash
 conda install -c conda-forge pymupdf=1.18.19
 pip install -r requirements.txt
