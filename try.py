@@ -6,7 +6,7 @@ import torch
 
 image = "https://w.wiki/A7Cc"
 pipeline = DetikzifyPipeline(*load(
-    base_model="nllg/detikzify-ds-7b",
+    base_model="samahadhoud/deepseek-coder-1.3b-base-with-curriculum-learning_10k_pvalue2_lambda0.3_tgrow8",
     device_map="auto",
     torch_dtype=torch.bfloat16,
 ))
