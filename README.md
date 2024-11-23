@@ -1,9 +1,14 @@
 # TikZGen
 
 TikZGen is an advanced tool for converting scientific figures into TikZ code, building upon DeTikZify. It utilizes curriculum learning with DeepSeek (1.3B) and SigLIP vision encoder to generate high-quality, editable TikZ representations of complex scientific figures.
+<div align="center">
+<img src="images/arch2.drawio.png" width="800" alt="Example 1">
+</div>
+
+<br><br>
 
 <div align="center">
-  <img src="images/eval.png" width="400" alt="Example 1">
+<img src="images/eval.png" width="500" alt="Example 1">
 </div>
 
 ## Key Features
