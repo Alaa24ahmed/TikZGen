@@ -85,6 +85,8 @@ conda install -c conda-forge pymupdf=1.18.19
 pip install -r requirements.txt
 ```
 
-## 
-
+## Usage
+```bash
+python try.py
+```
 
