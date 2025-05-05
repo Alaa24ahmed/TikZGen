@@ -32,7 +32,7 @@ def create_dataset(base_folder, start_index, end_index):
             continue
 
         code_folder = os.path.join(example_path, "code")
-        png_folder = os.path.join(example_path, "png_2")
+        png_folder = os.path.join(example_path, "png")
 
         # Skip if either folder does not exist
         if not os.path.exists(code_folder) or not os.path.exists(png_folder):
@@ -89,7 +89,7 @@ def create_dataset(base_folder, start_index, end_index):
     # Define the feature types
     features = Features({
         'id': Value(dtype='string'),
-        'png': Image(mode=None, decode=True),
+        'png': Image(decode=True),
         'code': Value(dtype='string')
     })
 
@@ -99,9 +99,9 @@ def create_dataset(base_folder, start_index, end_index):
     return dataset
 
 # Define the base folder path and index range
-base_folder = "/home/ali.mekky/Documents/AI/project/tikz_decomposition_output_sequential"
-start_index = 15000  # Change this to your desired start index
-end_index = 20000   # Change this to your desired end index
+base_folder = "/home/sama.hadhoud/Documents/AI701/project/ours/TikZGen/detikzify/dataset/decomposed_dataset/tikz_decomposition_output_sequential"
+start_index = 20000  # Change this to your desired start index
+end_index = 30000   # Change this to your desired end index
 
 # Create the dataset for the specified index range
 dataset = create_dataset(base_folder, start_index, end_index)
@@ -111,7 +111,7 @@ dataset.save_to_disk("huggingface_dataset")
 
 # Print a sample row
 print(dataset[0])
-repo_name = "decomposed-tikz-dataset-15-20"  # Change this to your preferred dataset name
+repo_name = "decomposed-tikz-dataset-20-30"  # Change this to your preferred dataset name
 
 # Push the dataset to Hugging Face Hub
 dataset.push_to_hub(repo_name)

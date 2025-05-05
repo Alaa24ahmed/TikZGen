@@ -259,7 +259,7 @@ async def generate_valid_combinations(elements, dep_graph, code, png_folder, cod
     return valid_combinations
 
 
-async def generate_sequential_combinations(elements, code, png_folder, code_folder, output_folder, options, begin_commands, sum, max_combinations=20):
+async def generate_sequential_combinations(elements, code, png_folder, code_folder, output_folder, options, begin_commands, sum, max_combinations=10):
     print("Generating sequential combinations of elements with a maximum threshold...")
     valid_combinations = []
     total_elements = len(elements)
@@ -423,11 +423,11 @@ async def process_tikz_diagram(code, image, output_folder, filename, sequential)
 
     print(f"\nProcessing complete for {filename}!")
 
-async def process_huggingface_dataset(dataset_name, output_base_directory, sequential =  False, num_examples=100):
+async def process_huggingface_dataset(dataset_name, output_base_directory, sequential, start_index, end_index, num_examples=100):
     # Load the dataset
     dataset = load_dataset(dataset_name)
     # examples = [13372]
-    for i in range(18450, 18500):
+    for i in range(start_index, end_index):
     # for i in examples:
         sample = dataset['train'][i]
         code = sample["code"]
@@ -435,15 +435,25 @@ async def process_huggingface_dataset(dataset_name, output_base_directory, seque
         filename = f"example_{i}"
         
         output_folder = os.path.join(output_base_directory, filename)
+        if os.path.exists(output_folder):
+            print(f"skippong example_{i} already exists")
+            continue
         await process_tikz_diagram(code, image, output_folder, filename, sequential)
     
     print("\nAll processing complete!")
 
-# Example usage
-dataset_name = "nllg/datikz-v2"
-output_base_directory = "tikz_decomposition_output"
-sequential = True
-if sequential:
-    output_base_directory+="_sequential"
-asyncio.run(process_huggingface_dataset(dataset_name, output_base_directory, sequential, num_examples=100))
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Process TikZ images and code.")
+    parser.add_argument('--start_index', type=int, default=0, help="Start index for processing.")
+    parser.add_argument('--end_index', type=int, default=None, help="End index for processing.")
+    args = parser.parse_args()
+
+    # Example usage
+    dataset_name = "nllg/datikz-v2"
+    output_base_directory = "tikz_decomposition_output"
+    sequential = True
+    if sequential:
+        output_base_directory+="_sequential"
+    asyncio.run(process_huggingface_dataset(dataset_name, output_base_directory, sequential, start_index=args.start_index, end_index=args.end_index))
 

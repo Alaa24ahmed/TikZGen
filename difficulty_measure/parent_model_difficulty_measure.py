@@ -27,10 +27,13 @@ from functools import partial
 import fcntl
 from queue import Queue
 import threading
-def create_output_directory():
+def create_output_directory(start_index: int, end_index: int, base_path: str):
     # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     # base_dir = f"tikz_results_{timestamp}"
-    base_dir = "data_difficulty_results[5350:5370]"
+    base_path = os.path.basename(os.path.normpath(base_path))
+
+    base_dir = f"difficulty_measure/data_difficulty_results_{base_path}"
+  
     os.makedirs(base_dir, exist_ok=True)
     os.makedirs(os.path.join(base_dir, "original"), exist_ok=True)
     os.makedirs(os.path.join(base_dir, "generated"), exist_ok=True)
@@ -42,7 +45,6 @@ def load_pipeline():
         device_map="auto",
         torch_dtype=torch.bfloat16,
     ))
-
 
 def save_image(image, path):
     if isinstance(image, torch.Tensor):
@@ -119,26 +121,26 @@ def generate(pipe, image, strict=False, timeout=None, **tqdm_kwargs):
         tikzpics.add((score, tikzpic))
         if not tikzpic.compiled_with_errors if strict else tikzpic.is_rasterizable:
             success = True
-        if time() - start >= 300:
+        if time() - start >= 10:
             return [tikzpic for _, tikzpic in sorted(tikzpics, key=itemgetter(0))]
         if success and (not timeout or time() - start >= timeout):
             break
     return [tikzpic for _, tikzpic in sorted(tikzpics, key=itemgetter(0))]
 
-def get_generated_image_and_code(png_path, comb_num, example_generated_dir, pipeline):
+def get_generated_image_and_code(png_path, example_file, example_generated_dir, pipeline):
     try:
         with Image.open(png_path) as original_img:
             # Make a copy if pipeline needs the image after context exit
             img_copy = original_img.copy()
-            RANK = 0
-            fig = generate(pipeline, image=img_copy, timeout=None, position=1, leave=False, disable=RANK!=0)[0]
+        RANK = 0
+        fig = generate(pipeline, image=img_copy, timeout=None, position=1, leave=False, disable=RANK!=0)[0]
 
-            if fig.is_rasterizable:
-                generated_img = fig.rasterize()
-                gen_img_path = os.path.join(example_generated_dir, f"generated_{comb_num}.png")
-                save_image(generated_img, gen_img_path)
-                return True, fig.code
-            return False, fig.code
+        if fig.is_rasterizable:
+            generated_img = fig.rasterize()
+            gen_img_path = os.path.join(example_generated_dir, f"{example_file}.png")
+            save_image(generated_img, gen_img_path)
+            return True, fig.code
+        return False, fig.code
     except Exception as e:
         print(f"Error processing image {png_path}: {str(e)}")
         return False, None
@@ -224,62 +226,42 @@ def process_batch(example_num: int, batch: List[str], output_dir: str):
     return batch_results
 
 
-def process_combination(pipeline, example_num, example_images_dir, example_generated_dir, png_path, code_folder, metrics_calculator):
+def process_combination(pipeline, example_file, images_dir, generated_dir, png_path, code_path, metrics_calculator):
     
-    # First try to get combination number from filename
-    comb_match = re.findall(r'combination_(\d+)', png_path)
-    if comb_match:
-        comb_num = int(comb_match[0])
-    else:
-        # Check if it's the main combination file
-        if "combination_main.png" in png_path:
-            comb_num = "main"
-        else:
-            return None
+    
+    if os.path.exists(os.path.join(generated_dir, f"{example_file}.tex")):
+        print(f'{example_file} already in generated')
+        return None
+    
+    print(f"processing {example_file}")
 
-    if os.path.exists(os.path.join('merged_results_2/generated', f'example_{example_num}_combination_{comb_num}.tex')):
-        print(f'example_{example_num}_combination_{comb_num} already in merged')
-        return None
-    
-    if os.path.exists(os.path.join(example_generated_dir, f"generated_{comb_num}.tex")):
-        print(f'example_{example_num}_combination_{comb_num} already in generated')
-        return None
-    
-    print(f"processing combination {comb_num} in example {example_num}")
-    
-    # Adjust code path based on combination number
-    if comb_num == "main":
-        code_path = os.path.join(code_folder, "combination_main.tex")
-    else:
-        code_path = os.path.join(code_folder, f"combination_{comb_num}.tex")
-    
     try:   
         if not os.path.exists(code_path):
             return None
             
         # Load and save original image using context manager
         with Image.open(png_path) as original_img:
-            orig_save_path = os.path.join(example_images_dir, f"combination_{comb_num}.png")
+            orig_save_path = os.path.join(images_dir, f"{example_file}.png")
             original_img.save(orig_save_path)
         
         # Read and save original code
         with open(code_path, 'r') as f:
             code = f.read()
-        orig_code_path = os.path.join(example_images_dir, f"combination_{comb_num}.tex")
+        orig_code_path = os.path.join(images_dir, f"{example_file}.tex")
         with open(orig_code_path, 'w') as f:
             f.write(code)
         
         # Generate new image and code
-        rasterized, rasterized_code = get_generated_image_and_code(png_path, comb_num, example_generated_dir, pipeline)
+        rasterized, rasterized_code = get_generated_image_and_code(png_path, example_file, generated_dir, pipeline)
         
         if rasterized:
-            gen_img_path = os.path.join(example_generated_dir, f"generated_{comb_num}.png")
+            gen_img_path = os.path.join(generated_dir, f"{example_file}.png")
             image_similarity = compare_images(orig_save_path, gen_img_path, visualize=False)["combined_score"]
         else:
             gen_img_path = None
             image_similarity = 1
             
-        gen_code_path = os.path.join(example_generated_dir, f"generated_{comb_num}.tex")
+        gen_code_path = os.path.join(generated_dir, f"{example_file}.tex")
         with open(gen_code_path, 'w') as f:
             f.write(rasterized_code)
         
@@ -288,8 +270,7 @@ def process_combination(pipeline, example_num, example_images_dir, example_gener
         combined_score = 0.7 * image_similarity + 0.3 * code_similarity
         
         return {
-            'example_number': example_num,
-            'combination_number': str(comb_num),  # Convert to string to handle "main"
+            'example_file': example_file,
             'image_similarity': image_similarity,
             'code_similarity': code_similarity,
             'combined_score': combined_score,
@@ -300,15 +281,14 @@ def process_combination(pipeline, example_num, example_images_dir, example_gener
         }
         
     except Exception as e:
-        print(f"Error processing combination {comb_num} in example {example_num}: {str(e)}")
+        print(f"Error processing {example_file}: {str(e)}")
         return None
 
 
 def append_to_csv(result, csv_path):
     """Append a single result to the CSV file with file locking"""
     fieldnames = [
-        'example_number',
-        'combination_number',
+        'example_file',
         'image_similarity',
         'code_similarity',
         'combined_score',
@@ -336,7 +316,7 @@ def append_to_csv(result, csv_path):
 
 
 
-def main(process_type: str = 'all', batch_size: int = None, max_workers: int = 1):
+def main(process_type: str = 'all', start_index: int = 0, end_index: int = None, base_dir: str = "difficulty_measure/data/"):
     """
     Main function with processing options
     
@@ -344,117 +324,97 @@ def main(process_type: str = 'all', batch_size: int = None, max_workers: int = 1
         process_type: 'all' or 'generated' (process all files or just generated ones)
         batch_size: Number of files to process in each batch (None for all at once)
     """
+
+
     if process_type == 'all':
-        base_path = "data/"
-        output_dir = create_output_directory()
+        base_path = base_dir
+
+        # base_path = "difficulty_measure/data/"
+
+        output_dir = create_output_directory(start_index, end_index, base_path)
+        csv_path = os.path.join(output_dir, "results.csv")
+        if os.path.exists(csv_path):
+            with open(csv_path, 'r', newline='') as csvfile:
+                reader = csv.DictReader(csvfile)
+                existing_files = [row['example_file'] for row in reader]
+
+        if start_index and end_index:
+            csv_path = os.path.join(output_dir, f"results_S{start_index}_E{end_index}.csv")
+        elif start_index:
+            csv_path = os.path.join(output_dir, f"results_S{start_index}.csv")
+        elif end_index:
+            csv_path = os.path.join(output_dir, f"results_E{end_index}.csv")
         
-        images_dir = os.path.join(output_dir, "images")
+        if os.path.exists(csv_path):
+            with open(csv_path, 'r', newline='') as csvfile:
+                reader = csv.DictReader(csvfile)
+                existing_files_2 = [row['example_file'] for row in reader]
+            existing_files.extend(existing_files_2)
+        
+            
+        
+        images_dir = os.path.join(output_dir, "original")
         generated_dir = os.path.join(output_dir, "generated")
         os.makedirs(images_dir, exist_ok=True)
         os.makedirs(generated_dir, exist_ok=True)
         
         pipeline = load_pipeline()
         results = []
+
+        examples_files = glob.glob(os.path.join(base_path, "example_*_combination_*.png"))
         
-        example_folders = sorted(glob.glob(os.path.join(base_path, "example_*")), 
-                               key=lambda x: int(x.split('_')[-1]))
         
-        print(f"Found {len(example_folders)} example folders: {example_folders}")
-        if not example_folders:
-            print(f"No example folders found in {base_path}")
-            return
+        print(f"Found {len(examples_files)} example files: {examples_files[:10]}...")
+        if start_index and end_index:
+            examples_files = examples_files[start_index:end_index]
+        elif start_index:
+            examples_files = examples_files[start_index:]
+        elif end_index:
+            examples_files = examples_files[:end_index]
+
+        print(f"Processing {len(examples_files)} example files from index {start_index} to {end_index}")
+
         metrics_calculator = TikZMetrics()
-        for example_folder in example_folders:
-            example_num = int(example_folder.split('_')[-1])
-            print(f"Processing example {example_num}")
-            
-            example_images_dir = os.path.join(images_dir, f"example_{example_num}")
-            example_generated_dir = os.path.join(generated_dir, f"example_{example_num}")
-            os.makedirs(example_images_dir, exist_ok=True)
-            os.makedirs(example_generated_dir, exist_ok=True)
-            
-            # png_folder = os.path.join(example_folder, "png")
-            png_folder = os.path.join(example_folder)
+        for example_file in examples_files:
 
-            # code_folder = os.path.join(example_folder, "code")
-            code_folder = os.path.join(example_folder)
+            example_file = os.path.basename(example_file)
 
-            
-            print(f"Looking for PNG files in: {png_folder}")
-            print(f"Looking for code files in: {code_folder}")
+            example_file = example_file.replace(".png", "")
 
-            if not os.path.exists(png_folder):
-                print(f"PNG folder does not exist: {png_folder}")
+            if example_file in existing_files:
+                print(f"{example_file} already processed")
                 continue
-            if not os.path.exists(code_folder):
-                print(f"Code folder does not exist: {code_folder}")
+            print(f"Processing example {example_file}")
+            
+            os.makedirs(images_dir, exist_ok=True)
+            os.makedirs(generated_dir, exist_ok=True)
+
+            if not examples_files:
+                print(f"No combination files found in {base_path}")
                 continue
 
-            combination_files = glob.glob(os.path.join(png_folder, "combination_*.png"))
-            
-            print(f"Found {len(combination_files)} combination files")
-            if not combination_files:
-                print(f"No combination files found in {png_folder}")
-                continue
-            
-            # Create a partial function with fixed arguments
-            process_func = partial(
-                process_combination,
+            result = process_combination(
                 pipeline,
-                example_num,
-                example_images_dir,
-                example_generated_dir,
-                code_folder=code_folder,
-                metrics_calculator = metrics_calculator
-            )
+                example_file,
+                images_dir,
+                generated_dir,
+                png_path = os.path.join(base_path, f"{example_file}.png"),
+                code_path = os.path.join(base_path, f"{example_file}.tex"),
+                metrics_calculator = metrics_calculator)
+            
+            if result is None:
+                print(f"Failed to process {example_file}")
+                continue
+            append_to_csv(result, csv_path)
 
-            csv_path = os.path.join(output_dir, "results.csv")
-
-        
-            # Create a thread-safe queue for results
-            result_queue = Queue()
             
-            # Create a separate thread for CSV writing
-            def csv_writer():
-                while True:
-                    result = result_queue.get()
-                    if result is None:  # Sentinel value to stop the thread
-                        break
-                    append_to_csv(result, csv_path)
-                    result_queue.task_done()
             
-            csv_writer_thread = threading.Thread(target=csv_writer)
-            csv_writer_thread.start()
+            print(f"Processed  {result['example_file']}:")
+            print(f"  Image Similarity: {result['image_similarity']:.4f}")
+            print(f"  Code Similarity: {result['code_similarity']:.4f}")
+            print(f"  Combined Score: {result['combined_score']:.4f}")
             
-            print(f"Processing {len(combination_files)} combinations with {max_workers} workers")
-            
-            # Process combinations in parallel
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(process_func, png_path) for png_path in combination_files]
-                
-                for future in concurrent.futures.as_completed(futures):
-                    result = future.result()
-                    if result is not None:
-                        result_queue.put(result)
-                        print(f"Processed combination {result['combination_number']}:")
-                        print(f"  Image Similarity: {result['image_similarity']:.4f}")
-                        print(f"  Code Similarity: {result['code_similarity']:.4f}")
-                        print(f"  Combined Score: {result['combined_score']:.4f}")
-            
-            # Signal the CSV writer thread to stop
-            result_queue.put(None)
-            csv_writer_thread.join()
-            
-        # Read all results from CSV for sorting and visualization
-        results = []
-        with open(csv_path, 'r', newline='') as csvfile:
-            fcntl.flock(csvfile.fileno(), fcntl.LOCK_SH)  # Shared lock for reading
-            try:
-                reader = csv.DictReader(csvfile)
-                results = list(reader)
-            finally:
-                fcntl.flock(csvfile.fileno(), fcntl.LOCK_UN)
-
+           
 
     elif process_type == 'generated':
         # Process only generated files
@@ -464,126 +424,135 @@ def main(process_type: str = 'all', batch_size: int = None, max_workers: int = 1
         for result in results:
             append_to_csv(result, csv_path)
     
-    # Save to CSV
-    csv_path = os.path.join(output_dir, "results.csv")
-    fieldnames = [
-        'example_number',
-        'combination_number',
-        'image_similarity',
-        'code_similarity',
-        'combined_score',
-        'original_image_path',
-        'generated_image_path',
-        'original_code_path',
-        'generated_code_path'
-    ]
+#     # Save to CSV
+#     csv_path = os.path.join(output_dir, "results.csv")
+#     fieldnames = [
+#         'example_number',
+#         'combination_number',
+#         'image_similarity',
+#         'code_similarity',
+#         'combined_score',
+#         'original_image_path',
+#         'generated_image_path',
+#         'original_code_path',
+#         'generated_code_path'
+#     ]
     
-    # with open(csv_path, 'w', newline='') as csvfile:
-    #     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-    #     writer.writeheader()
-    #     for result in results:
-    #         writer.writerow(result)
+#     # with open(csv_path, 'w', newline='') as csvfile:
+#     #     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+#     #     writer.writeheader()
+#     #     for result in results:
+#     #         writer.writerow(result)
 
-    # Sort results by combined score (ascending)
-    sorted_results = sorted(results, key=lambda x: x['combined_score'])
+#     # Sort results by combined score (ascending)
+#     sorted_results = sorted(results, key=lambda x: x['combined_score'])
     
-    # Calculate the number of digits needed based on total images
-    num_images = len(sorted_results)
-    padding_width = len(str(num_images))  # This gets the number of digits in total count
+#     # Calculate the number of digits needed based on total images
+#     num_images = len(sorted_results)
+#     padding_width = len(str(num_images))  # This gets the number of digits in total count
     
-    # Create sorted output directories
-    sorted_orig_dir = os.path.join(output_dir, "sorted_original")
-    sorted_gen_dir = os.path.join(output_dir, "sorted_generated")
-    os.makedirs(sorted_orig_dir, exist_ok=True)
-    os.makedirs(sorted_gen_dir, exist_ok=True)
-    # Save sorted images with rank prefix
-    for rank, result in enumerate(sorted_results, 1):
-        # Get original file names
-        orig_name = os.path.basename(result['original_image_path'])
-        gen_name = os.path.basename(result['generated_image_path'])
+#     # Create sorted output directories
+#     sorted_orig_dir = os.path.join(output_dir, "sorted_original")
+#     sorted_gen_dir = os.path.join(output_dir, "sorted_generated")
+#     os.makedirs(sorted_orig_dir, exist_ok=True)
+#     os.makedirs(sorted_gen_dir, exist_ok=True)
+#     # Save sorted images with rank prefix
+#     for rank, result in enumerate(sorted_results, 1):
+#         # Get original file names
+#         orig_name = os.path.basename(result['original_image_path'])
+#         gen_name = os.path.basename(result['generated_image_path'])
         
-        # Create new filenames with dynamic rank prefix
-        new_orig_name = f"{rank:0{padding_width}d}_{orig_name}_diff{result['combined_score']}.png"
-        new_gen_name = f"{rank:0{padding_width}d}_{gen_name}_diff{result['combined_score']}.png"
+#         # Create new filenames with dynamic rank prefix
+#         new_orig_name = f"{rank:0{padding_width}d}_{orig_name}_diff{result['combined_score']}.png"
+#         new_gen_name = f"{rank:0{padding_width}d}_{gen_name}_diff{result['combined_score']}.png"
         
-        # Copy images to sorted directories using context managers
-        with Image.open(result['original_image_path']) as orig_img:
-            orig_img.save(os.path.join(sorted_orig_dir, new_orig_name))
+#         # Copy images to sorted directories using context managers
+#         with Image.open(result['original_image_path']) as orig_img:
+#             orig_img.save(os.path.join(sorted_orig_dir, new_orig_name))
         
-        if result['generated_image_path']:
-            try:
-                with Image.open(result['generated_image_path']) as gen_img:
-                    gen_img.save(os.path.join(sorted_gen_dir, new_gen_name))
-            except Exception as e:
-                print(f"Error with generated image for {gen_name}: {str(e)}")
+#         if result['generated_image_path']:
+#             try:
+#                 with Image.open(result['generated_image_path']) as gen_img:
+#                     gen_img.save(os.path.join(sorted_gen_dir, new_gen_name))
+#             except Exception as e:
+#                 print(f"Error with generated image for {gen_name}: {str(e)}")
 
-        # Update paths in results
-        result['sorted_original_path'] = os.path.join(sorted_orig_dir, new_orig_name)
-        result['sorted_generated_path'] = os.path.join(sorted_gen_dir, new_gen_name)
-    # Update CSV with sorted paths
-    fieldnames.extend(['sorted_original_path', 'sorted_generated_path'])
+#         # Update paths in results
+#         result['sorted_original_path'] = os.path.join(sorted_orig_dir, new_orig_name)
+#         result['sorted_generated_path'] = os.path.join(sorted_gen_dir, new_gen_name)
+#     # Update CSV with sorted paths
+#     fieldnames.extend(['sorted_original_path', 'sorted_generated_path'])
     
-    with open(csv_path, 'w', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        for result in sorted_results:
-            writer.writerow(result)
+#     with open(csv_path, 'w', newline='') as csvfile:
+#         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+#         writer.writeheader()
+#         for result in sorted_results:
+#             writer.writerow(result)
 
-    # Create an HTML visualization of the sorted results
-    html_path = os.path.join(output_dir, "sorted_results.html")
-    with open(html_path, 'w') as f:
-        f.write('''
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        .image-pair {
-            display: flex;
-            margin-bottom: 20px;
-            border-bottom: 1px solid #ccc;
-            padding-bottom: 20px;
-        }
-        .image-container {
-            flex: 1;
-            margin: 10px;
-            text-align: center;
-        }
-        img {
-            max-width: 100%;
-            height: auto;
-        }
-        .metrics {
-            margin-top: 10px;
-            font-family: monospace;
-        }
-    </style>
-</head>
-<body>
-        ''')
+#     # Create an HTML visualization of the sorted results
+#     html_path = os.path.join(output_dir, "sorted_results.html")
+#     with open(html_path, 'w') as f:
+#         f.write('''
+# <!DOCTYPE html>
+# <html>
+# <head>
+#     <style>
+#         .image-pair {
+#             display: flex;
+#             margin-bottom: 20px;
+#             border-bottom: 1px solid #ccc;
+#             padding-bottom: 20px;
+#         }
+#         .image-container {
+#             flex: 1;
+#             margin: 10px;
+#             text-align: center;
+#         }
+#         img {
+#             max-width: 100%;
+#             height: auto;
+#         }
+#         .metrics {
+#             margin-top: 10px;
+#             font-family: monospace;
+#         }
+#     </style>
+# </head>
+# <body>
+#         ''')
         
-        for result in sorted_results:
-            f.write(f'''
-    <div class="image-pair">
-        <div class="image-container">
-            <h3>Original</h3>
-            <img src="{os.path.relpath(result['sorted_original_path'], output_dir)}">
-        </div>
-        <div class="image-container">
-            <h3>Generated</h3>
-            <img src="{os.path.relpath(result['sorted_generated_path'], output_dir)}">
-        </div>
-        <div class="metrics">
-            <p>Combined Score: {result['combined_score']:.4f}</p>
-            <p>Image Similarity: {result['image_similarity']:.4f}</p>
-            <p>Code Similarity: {result['code_similarity']:.4f}</p>
-        </div>
-    </div>
-            ''')
+#         for result in sorted_results:
+#             f.write(f'''
+#     <div class="image-pair">
+#         <div class="image-container">
+#             <h3>Original</h3>
+#             <img src="{os.path.relpath(result['sorted_original_path'], output_dir)}">
+#         </div>
+#         <div class="image-container">
+#             <h3>Generated</h3>
+#             <img src="{os.path.relpath(result['sorted_generated_path'], output_dir)}">
+#         </div>
+#         <div class="metrics">
+#             <p>Combined Score: {result['combined_score']:.4f}</p>
+#             <p>Image Similarity: {result['image_similarity']:.4f}</p>
+#             <p>Code Similarity: {result['code_similarity']:.4f}</p>
+#         </div>
+#     </div>
+#             ''')
         
-        f.write('''
-</body>
-</html>
-        ''')
+#         f.write('''
+# </body>
+# </html>
+#         ''')
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser(description="Process TikZ images and code.")
+    parser.add_argument('--process_type', type=str, default='all', choices=['all', 'generated'], help="Type of processing to perform.")
+    parser.add_argument('--start_index', type=int, default=0, help="Start index for processing.")
+    parser.add_argument('--end_index', type=int, default=None, help="End index for processing.")
+    parser.add_argument('--base_dir', type=str, default="difficulty_measure/data/", help="Base directory for images and code.")
+
+    args = parser.parse_args()
+
+    main(start_index=args.start_index, end_index=args.end_index, process_type=args.process_type, base_dir=args.base_dir)

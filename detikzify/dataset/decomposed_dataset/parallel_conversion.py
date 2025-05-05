@@ -39,7 +39,7 @@ def process_tikz_files(args):
 
 # Main function to iterate through all examples and combinations
 def process_all_examples(start: int, end: int):
-    base_dir = "/home/ali.mekky/Documents/AI/project/tikz_decomposition_output_sequential"
+    base_dir = "/home/sama.hadhoud/Documents/AI701/project/ours/TikZGen/detikzify/dataset/decomposed_dataset/tikz_decomposition_output_sequential"
     tasks = []
 
     # Iterate through each example from start to end
@@ -104,7 +104,7 @@ def process_all_examples(start: int, end: int):
 
 def copy_main(start_index, end_index):
     for i in range(start_index, end_index):
-        folder_name = f"/home/ali.mekky/Documents/AI/project/tikz_decomposition_output_sequential/example_{i}"
+        folder_name = f"/home/sama.hadhoud/Documents/AI701/project/ours/TikZGen/detikzify/dataset/decomposed_dataset/tikz_decomposition_output_sequential/example_{i}"
         png_folder = os.path.join(folder_name, "png")
         png_2_folder = os.path.join(folder_name, "png_2")
 
@@ -128,8 +128,8 @@ def copy_main(start_index, end_index):
 if __name__ == "__main__":
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Process TikZ files and generate PNGs.")
-    parser.add_argument("start_index", type=int, help="Starting index for processing")
-    parser.add_argument("end_index", type=int, help="Ending index for processing")
+    parser.add_argument("--start_index", type=int, help="Starting index for processing")
+    parser.add_argument("--end_index", type=int, help="Ending index for processing")
     args = parser.parse_args()
 
     # Run the processing for all examples in the specified range
